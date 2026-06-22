@@ -4,14 +4,24 @@ A mini AI-powered customer support chat widget for **Nova Threads**, a fictional
 
 ---
 
+## Live Demo
+
+- **App (frontend):** https://spur-ai-live-chat-agent-indol.vercel.app
+- **Backend API:** https://spur-bnwf.onrender.com (health check: [`/health`](https://spur-bnwf.onrender.com/health))
+
+> Note: the backend is on Render's free tier and may take ~30s to wake from cold start on the first request.
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
 | Backend | Node.js · TypeScript · Express |
 | Database | SQLite (via Drizzle ORM + better-sqlite3) |
-| LLM | Anthropic Claude (claude-haiku-4-5) |
+| LLM | Google Gemini (gemini-2.5-flash-lite) |
 | Frontend | Next.js 15 (App Router) · React · Tailwind CSS |
+| Deployment | Frontend on Vercel · Backend on Render |
 
 ---
 
@@ -30,7 +40,7 @@ spur/
 │   │   ├── routes/
 │   │   │   └── chat.ts          # POST /chat/message, GET /chat/history/:id
 │   │   ├── services/
-│   │   │   ├── llm.ts           # Anthropic SDK wrapper + store knowledge base
+│   │   │   ├── llm.ts           # Gemini SDK wrapper + store knowledge base
 │   │   │   └── conversation.ts  # DB access layer (sessions, messages)
 │   │   └── index.ts             # Express app entry point
 │   ├── .env.example
@@ -58,7 +68,7 @@ spur/
 ### Prerequisites
 
 - Node.js 18+
-- An [Anthropic API key](https://console.anthropic.com/)
+- A [Google Gemini API key](https://aistudio.google.com/app/apikey)
 
 ### 1. Clone & install
 
@@ -72,7 +82,7 @@ cd spur
 ```bash
 cd backend
 cp .env.example .env
-# Edit .env and add your ANTHROPIC_API_KEY
+# Edit .env and add your GOOGLE_API_KEY
 npm install
 npm run db:migrate   # Creates spur.db with tables
 npm run dev          # Starts backend on http://localhost:3001
@@ -100,7 +110,7 @@ Visit [http://localhost:3000](http://localhost:3000) and start chatting.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | ✅ | — | Your Anthropic API key |
+| `GOOGLE_API_KEY` | ✅ | — | Your Google Gemini API key |
 | `PORT` | ❌ | `3001` | Port for the Express server |
 | `DATABASE_PATH` | ❌ | `./spur.db` | Path to the SQLite database file |
 | `FRONTEND_URL` | ❌ | `http://localhost:3000` | Allowed CORS origin |
@@ -109,7 +119,7 @@ Visit [http://localhost:3000](http://localhost:3000) and start chatting.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `NEXT_PUBLIC_API_URL` | ❌ | `http://localhost:3001` | Backend base URL |
+| `NEXT_PUBLIC_API_URL` | ❌ | `http://localhost:3001` | Backend base URL (set to the Render backend URL in production) |
 
 ---
 
@@ -174,7 +184,7 @@ Express Router (routes/chat.ts)
     │
     └──► LLM Service (services/llm.ts)
            - generateReply(history, message)
-           - Calls Anthropic claude-haiku-4-5
+           - Calls Google Gemini (gemini-2.5-flash-lite)
            - Wraps all API errors into typed LLMError
 ```
 
@@ -199,20 +209,21 @@ ChatWidget
 
 ## LLM Integration Notes
 
-**Provider:** Anthropic (claude-haiku-4-5)  
-**Why Haiku?** It's fast, cheap, and more than capable for FAQ-style support. For a production product you might switch to Sonnet for more nuanced reasoning.
+**Provider:** Google Gemini (gemini-2.5-flash-lite)  
+**Why Gemini Flash Lite?** It's fast, cheap, and has a generous free tier — more than capable for FAQ-style support. For a production product you might move to a larger model for more nuanced reasoning.
 
 **Prompting approach:**
-- System prompt contains the full Nova Threads knowledge base (shipping, returns, payments, hours).
-- Up to the last 20 messages of conversation history are included for context.
-- Max tokens capped at 512 — enough for a complete support reply, limits runaway cost.
+- The full Nova Threads knowledge base (shipping, returns, payments, hours) is passed as the model's `systemInstruction`.
+- Up to the last 20 messages of conversation history are replayed into `startChat({ history })` for context.
+- Max output tokens capped at 512 — enough for a complete support reply, limits runaway cost.
+- Safety settings block harassment / hate-speech content.
 - LLM is instructed to stay in-scope and direct unknowns to `support@novathreads.com`.
 
 **Error handling:**
 | Error | HTTP status | User message |
 |---|---|---|
 | Rate limited | 429 | "Rate limit reached. Please try again in a moment." |
-| Bad API key | 503 | "Invalid API key. Please check your configuration." |
+| Invalid API key | 503 | "Invalid API key. Please check your configuration." |
 | Timeout | 504 | "The request timed out. Please try again." |
 | Other API error | 502 | Forwarded error message |
 
@@ -260,8 +271,7 @@ Indexes on `messages.conversation_id` and `messages.created_at` for efficient hi
 - **Tool use / RAG** — instead of hardcoding the knowledge base in the system prompt, store FAQ entries in the DB and retrieve relevant ones dynamically (semantic search or simple keyword match).
 - **Multiple sessions UI** — a sidebar to switch between past conversations.
 - **Auth** — even lightweight session tokens would prevent session ID spoofing.
-- **PostgreSQL migration** — SQLite is perfect here, but a Drizzle schema swap to Postgres is trivial.
-- **Deployed demo** — would deploy backend to Render and frontend to Vercel.
+- **PostgreSQL migration** — SQLite is perfect here, but a Drizzle schema swap to Postgres is trivial. (Note: on Render's free tier the SQLite file lives on ephemeral disk, so chat history resets on redeploy/restart — Postgres or a persistent volume would fix this.)
 
 **Intentional simplifications:**
 - Auth skipped per spec.
