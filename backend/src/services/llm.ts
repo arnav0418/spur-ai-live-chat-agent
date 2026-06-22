@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 
 const STORE_KNOWLEDGE = `
 You are a helpful customer support agent for "Nova Threads" — a modern online fashion and lifestyle store.
@@ -76,62 +76,69 @@ export class LLMError extends Error {
   }
 }
 
-let client: Anthropic | null = null;
+let genAI: GoogleGenerativeAI | null = null;
 
-function getClient(): Anthropic {
-  if (!client) {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+function getClient(): GoogleGenerativeAI {
+  if (!genAI) {
+    const apiKey = process.env.GOOGLE_API_KEY;
     if (!apiKey) {
-      throw new LLMError("ANTHROPIC_API_KEY is not set.", "invalid_key");
+      throw new LLMError("GOOGLE_API_KEY is not set.", "invalid_key");
     }
-    client = new Anthropic({ apiKey });
+    genAI = new GoogleGenerativeAI(apiKey);
   }
-  return client;
+  return genAI;
 }
 
 export async function generateReply(
   history: ChatMessage[],
   userMessage: string
 ): Promise<string> {
-  const anthropic = getClient();
+  const client = getClient();
+
+  const model = client.getGenerativeModel({
+    model: "gemini-1.5-flash",
+    systemInstruction: STORE_KNOWLEDGE,
+    generationConfig: {
+      maxOutputTokens: MAX_TOKENS,
+      temperature: 0.7,
+    },
+    safetySettings: [
+      { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+      { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+    ],
+  });
 
   const trimmedHistory = history.slice(-MAX_HISTORY_MESSAGES);
 
-  const messages: Anthropic.MessageParam[] = [
-    ...trimmedHistory.map((m) => ({
-      role: m.role,
-      content: m.content,
+  const chat = model.startChat({
+    history: trimmedHistory.map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
     })),
-    { role: "user" as const, content: userMessage },
-  ];
+  });
 
   try {
-    const response = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: MAX_TOKENS,
-      system: STORE_KNOWLEDGE,
-      messages,
-    });
-
-    const block = response.content[0];
-    if (block.type !== "text") {
-      throw new LLMError("Unexpected response type from LLM.", "unknown");
+    const result = await chat.sendMessage(userMessage);
+    const text = result.response.text().trim();
+    if (!text) {
+      throw new LLMError("Empty response from LLM.", "unknown");
     }
-    return block.text.trim();
+    return text;
   } catch (err) {
     if (err instanceof LLMError) throw err;
-    if (err instanceof Anthropic.APIError) {
-      if (err.status === 429) {
-        throw new LLMError("Rate limit reached. Please try again in a moment.", "rate_limit");
-      }
-      if (err.status === 401) {
-        throw new LLMError("Invalid API key. Please check your configuration.", "invalid_key");
-      }
-      if (err.status === 408 || err.message?.includes("timeout")) {
-        throw new LLMError("The request timed out. Please try again.", "timeout");
-      }
-      throw new LLMError(`LLM API error: ${err.message}`, "api_error");
+
+    const message = err instanceof Error ? err.message : String(err);
+
+    if (message.includes("429") || message.toLowerCase().includes("quota")) {
+      throw new LLMError("Rate limit reached. Please try again in a moment.", "rate_limit");
     }
-    throw new LLMError("An unexpected error occurred. Please try again.", "unknown");
+    if (message.includes("400") && message.toLowerCase().includes("api key")) {
+      throw new LLMError("Invalid API key. Please check your configuration.", "invalid_key");
+    }
+    if (message.toLowerCase().includes("timeout")) {
+      throw new LLMError("The request timed out. Please try again.", "timeout");
+    }
+
+    throw new LLMError(`LLM API error: ${message}`, "api_error");
   }
 }

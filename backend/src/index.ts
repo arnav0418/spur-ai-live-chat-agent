@@ -7,9 +7,21 @@ import { notFoundHandler, globalErrorHandler } from "./middleware/errorHandler";
 const app = express();
 const PORT = process.env.PORT ?? 3001;
 
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  "http://localhost:3000",
+].filter(Boolean) as string[];
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL ?? "http://localhost:3000",
+    origin: (origin, callback) => {
+      // allow non-browser requests (curl, Postman, Render health checks)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.some((o) => origin.startsWith(o))) {
+        return callback(null, true);
+      }
+      callback(new Error(`CORS: origin ${origin} not allowed`));
+    },
     methods: ["GET", "POST"],
     allowedHeaders: ["Content-Type"],
   })
