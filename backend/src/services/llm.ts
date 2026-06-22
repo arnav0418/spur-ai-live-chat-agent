@@ -96,7 +96,7 @@ export async function generateReply(
   const client = getClient();
 
   const model = client.getGenerativeModel({
-    model: "gemini-1.5-flash",
+    model: "gemini-2.0-flash",
     systemInstruction: STORE_KNOWLEDGE,
     generationConfig: {
       maxOutputTokens: MAX_TOKENS,
